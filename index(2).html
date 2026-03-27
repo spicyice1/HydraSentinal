@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HydraSentinel — Flood Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── HEADER ─────────────────────────────────────────────── -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">💧</div>
+    <div>
+      <h1>HydraSentinel</h1>
+      <p>Flood Monitoring System</p>
+    </div>
+  </div>
+  <div class="header-right">
+    <span id="last-update">Never updated</span>
+    <button id="refresh-btn" onclick="fetchData()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="1 4 1 10 7 10"/>
+        <path d="M3.51 15a9 9 0 1 0 .49-4.5"/>
+      </svg>
+      Refresh
+    </button>
+  </div>
+</header>
+
+<!-- ── CONFIG BAR ─────────────────────────────────────────── -->
+<div class="config-bar">
+  <div class="row">
+    <label>Auth Token</label>
+    <input type="text" id="cfg-token" placeholder="Paste your Blynk auth token here" />
+  </div>
+  <div class="row">
+    <label>Warn (cm)</label>
+    <input type="number" id="cfg-warn"   class="short" value="10" />
+    <label>Danger (cm)</label>
+    <input type="number" id="cfg-danger" class="short" value="20" />
+    <button class="save-btn" onclick="saveConfig()">Save &amp; Connect</button>
+  </div>
+</div>
+
+<!-- ── DASHBOARD GRID ─────────────────────────────────────── -->
+<main>
+
+  <!-- Power -->
+  <div class="card card-power">
+    <div class="card-label">System Power</div>
+    <div class="power-state" id="power-text" style="color:var(--muted)">—</div>
+    <div class="power-sub"   id="power-sub">Waiting for data</div>
+  </div>
+
+  <!-- Status -->
+  <div class="card card-status" id="card-status">
+    <div class="card-label" style="text-align:center">System Status</div>
+    <div id="status-text" style="color:var(--muted)">—</div>
+  </div>
+
+  <!-- Gauge -->
+  <div class="card card-gauge">
+    <div class="card-label" style="text-align:center">Flood Water Level — Gauge</div>
+    <div class="gauge-wrap">
+      <svg class="gauge-svg" viewBox="0 0 230 135" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- track -->
+        <path d="M 22 125 A 93 93 0 0 1 208 125"
+              stroke="#1e2736" stroke-width="14" stroke-linecap="round" fill="none"/>
+        <!-- coloured threshold bands -->
+        <path id="gauge-safe-arc"   stroke="var(--safe)"   stroke-width="14" stroke-linecap="butt" fill="none"/>
+        <path id="gauge-warn-arc"   stroke="var(--warn)"   stroke-width="14" stroke-linecap="butt" fill="none"/>
+        <path id="gauge-danger-arc" stroke="var(--danger)" stroke-width="14" stroke-linecap="butt" fill="none"/>
+        <!-- active fill -->
+        <path id="gauge-fill" stroke="#2979ff" stroke-width="14" stroke-linecap="round" fill="none"
+              style="transition:stroke-dasharray .8s cubic-bezier(.4,0,.2,1), stroke .5s"/>
+        <!-- needle -->
+        <line id="gauge-needle"
+              x1="115" y1="125" x2="115" y2="40"
+              stroke="white" stroke-width="2.5" stroke-linecap="round"
+              style="transform-origin:115px 125px; transition:transform .8s cubic-bezier(.4,0,.2,1)"/>
+        <circle cx="115" cy="125" r="5" fill="white"/>
+      </svg>
+      <div id="gauge-value-display">
+        <div id="gauge-num" style="color:var(--muted)">—</div>
+        <div class="gauge-unit">cm</div>
+      </div>
+    </div>
+    <div class="gauge-scale">
+      <span>0</span>
+      <span id="gauge-max-label">70</span>
+    </div>
+  </div>
+
+  <!-- Level Bar -->
+  <div class="card card-bar">
+    <div class="card-label">Flood Level</div>
+    <div class="bar-container">
+      <div id="water-bar" style="height:0%"></div>
+      <div class="bar-markers">
+        <div class="bar-marker" id="bar-max-label">70 cm</div>
+        <div class="bar-marker" style="color:var(--danger)">▶ DANGER</div>
+        <div class="bar-marker" style="color:var(--warn)">▶ WARN</div>
+        <div class="bar-marker">0</div>
+      </div>
+    </div>
+    <div class="bar-value status-safe" id="bar-num">
+      — <span>cm</span>
+    </div>
+  </div>
+
+  <!-- Calibrate -->
+  <div class="card card-calibrate">
+    <div class="card-label">Calibration</div>
+    <button id="calibrate-btn" onclick="triggerCalibrate()">
+      <span id="calibrate-icon">⊕</span> Calibrate
+    </button>
+    <div id="calibrate-status">Sends trigger to device via Blynk</div>
+  </div>
+
+  <!-- History -->
+  <div class="card card-history">
+    <div class="card-label">History — Last 20 readings</div>
+    <div class="threshold-legend">
+      <div class="tl-item"><div class="tl-dot" style="background:var(--safe)"></div>Safe</div>
+      <div class="tl-item"><div class="tl-dot" style="background:var(--warn)"></div>Warning</div>
+      <div class="tl-item"><div class="tl-dot" style="background:var(--danger)"></div>Danger</div>
+    </div>
+    <canvas id="history-canvas"></canvas>
+    <div class="history-empty" id="history-empty">No data yet — refresh to load</div>
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<!-- ── SCRIPT ─────────────────────────────────────────────── -->
+<script>
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+let config = {
+  token:  localStorage.getItem('hs_token')              || '',
+  warn:   parseFloat(localStorage.getItem('hs_warn'))   || 10,
+  danger: parseFloat(localStorage.getItem('hs_danger')) || 20,
+  max:    70, // driven by device calibration, not user input
+};
+
+(function applyConfig() {
+  document.getElementById('cfg-token').value  = config.token;
+  document.getElementById('cfg-warn').value   = config.warn;
+  document.getElementById('cfg-danger').value = config.danger;
+})();
+
+function saveConfig() {
+  config.token  = document.getElementById('cfg-token').value.trim();
+  config.warn   = parseFloat(document.getElementById('cfg-warn').value)   || 10;
+  config.danger = parseFloat(document.getElementById('cfg-danger').value) || 20;
+  localStorage.setItem('hs_token',  config.token);
+  localStorage.setItem('hs_warn',   config.warn);
+  localStorage.setItem('hs_danger', config.danger);
+  toast('Config saved!');
+  fetchData();
+}
+
+// ── HISTORY ───────────────────────────────────────────────────────────────────
+let history = [];
+const MAX_HIST = 20;
+
+// ── BLYNK FETCH ───────────────────────────────────────────────────────────────
+const BASE = 'https://blynk.cloud/external/api/get';
+
+async function blynkGet(pin) {
+  const res = await fetch(`${BASE}?token=${encodeURIComponent(config.token)}&${pin}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
+}
+
+async function fetchData() {
+  if (!config.token) { toast('Paste your Auth Token and click Save & Connect!'); return; }
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  try {
+    const [powerRaw, levelRaw, statusRaw] = await Promise.all([
+      blynkGet('v0'), blynkGet('v1'), blynkGet('v2'),
+    ]);
+    const power  = parseInt(powerRaw)   || 0;
+    const level  = parseFloat(levelRaw) || 0;
+    const status = statusRaw.replace(/"/g, '').trim().toUpperCase();
+    updateDashboard(power, level, status);
+    pushHistory(level);
+    drawHistory();
+    document.getElementById('last-update').textContent =
+      'Updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    toast('Could not reach Blynk — check token & network.');
+    console.error(e);
+  }
+  btn.classList.remove('spinning');
+}
+
+// ── UPDATE DASHBOARD ──────────────────────────────────────────────────────────
+function updateDashboard(power, level, status) {
+  // Power
+  const powerEl  = document.getElementById('power-text');
+  const powerSub = document.getElementById('power-sub');
+  powerEl.textContent  = power ? 'ON' : 'OFF';
+  powerEl.style.color  = power ? 'var(--safe)' : 'var(--muted)';
+  powerSub.textContent = power ? 'System running' : 'System offline';
+
+  // Status
+  const statusEl  = document.getElementById('status-text');
+  const cardStatus = document.getElementById('card-status');
+  statusEl.textContent = status || '—';
+  statusEl.className   = '';
+  cardStatus.classList.remove('flashing');
+
+  if      (status === 'DANGER')  { statusEl.classList.add('status-danger'); cardStatus.classList.add('flashing'); }
+  else if (status === 'WARNING') { statusEl.classList.add('status-warn');   }
+  else if (status === 'SAFE')    { statusEl.classList.add('status-safe');   }
+  else                           { statusEl.style.color = 'var(--muted)';  }
+
+  // Gauge
+  updateGauge(level);
+
+  // Bar
+  const barNum  = document.getElementById('bar-num');
+  const waterBar = document.getElementById('water-bar');
+  const pct = Math.min((level / config.max) * 100, 100);
+  waterBar.style.height = pct + '%';
+  barNum.innerHTML = level.toFixed(1) + ' <span>cm</span>';
+  waterBar.className = '';
+  waterBar.id = 'water-bar';
+  if      (status === 'DANGER')  { waterBar.classList.add('bar-danger'); barNum.className = 'bar-value status-danger'; }
+  else if (status === 'WARNING') { waterBar.classList.add('bar-warn');   barNum.className = 'bar-value status-warn';   }
+  else                           { waterBar.classList.add('bar-safe');   barNum.className = 'bar-value status-safe';   }
+}
+
+// ── GAUGE ─────────────────────────────────────────────────────────────────────
+const G_START = -140, G_END = 140, G_RANGE = 280;
+const G_CX = 115, G_CY = 125, G_R = 93;
+
+function describeArc(cx, cy, r, startDeg, endDeg) {
+  const toRad = d => (d - 90) * Math.PI / 180;
+  const x1 = cx + r * Math.cos(toRad(startDeg));
+  const y1 = cy + r * Math.sin(toRad(startDeg));
+  const x2 = cx + r * Math.cos(toRad(endDeg));
+  const y2 = cy + r * Math.sin(toRad(endDeg));
+  const large = (endDeg - startDeg) > 180 ? 1 : 0;
+  return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
+}
+
+function valToDeg(val) {
+  return G_START + (Math.min(val, config.max) / config.max) * G_RANGE;
+}
+
+function drawThresholdBands() {
+  const warnDeg   = valToDeg(config.warn);
+  const dangerDeg = valToDeg(config.danger);
+  document.getElementById('gauge-safe-arc').setAttribute('d',
+    describeArc(G_CX, G_CY, G_R, G_START, warnDeg));
+  document.getElementById('gauge-warn-arc').setAttribute('d',
+    describeArc(G_CX, G_CY, G_R, warnDeg, dangerDeg));
+  document.getElementById('gauge-danger-arc').setAttribute('d',
+    describeArc(G_CX, G_CY, G_R, dangerDeg, G_END));
+}
+
+function updateGauge(level) {
+  drawThresholdBands();
+  const pct = Math.min(level / config.max, 1);
+  const deg = G_START + pct * G_RANGE;
+  const fillEl = document.getElementById('gauge-fill');
+  fillEl.setAttribute('d', describeArc(G_CX, G_CY, G_R, G_START, deg));
+  let color = 'var(--safe)';
+  if      (level >= config.danger) color = 'var(--danger)';
+  else if (level >= config.warn)   color = 'var(--warn)';
+  fillEl.style.stroke = color;
+  document.getElementById('gauge-needle').style.transform = `rotate(${deg}deg)`;
+  const numEl = document.getElementById('gauge-num');
+  numEl.textContent = level.toFixed(1);
+  numEl.style.color = color;
+}
+
+// ── HISTORY CHART ─────────────────────────────────────────────────────────────
+function pushHistory(level) {
+  history.push({ level, time: new Date() });
+  if (history.length > MAX_HIST) history.shift();
+}
+
+function drawHistory() {
+  const canvas = document.getElementById('history-canvas');
+  const empty  = document.getElementById('history-empty');
+  if (history.length < 2) { empty.style.display = 'flex'; return; }
+  empty.style.display = 'none';
+
+  const dpr = window.devicePixelRatio || 1;
+  const W   = canvas.parentElement.clientWidth - 44;
+  const H   = 160;
+  canvas.width  = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  const pad = { top: 14, right: 14, bottom: 28, left: 42 };
+  const cW  = W - pad.left - pad.right;
+  const cH  = H - pad.top  - pad.bottom;
+
+  function toX(i)   { return pad.left + i * (cW / (history.length - 1)); }
+  function toY(val) { return pad.top  + cH - (val / config.max) * cH;    }
+
+  // Grid + Y labels
+  ctx.strokeStyle = 'rgba(255,255,255,.04)'; ctx.lineWidth = 1;
+  [0, .25, .5, .75, 1].forEach(f => {
+    const y = pad.top + cH * (1 - f);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + cW, y); ctx.stroke();
+    ctx.fillStyle = 'rgba(122,139,160,.6)';
+    ctx.font = `500 10px 'DM Mono', monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillText((f * config.max).toFixed(0), pad.left - 6, y + 4);
+  });
+
+  // Threshold bands
+  const wy = toY(config.warn); const dy = toY(config.danger);
+  ctx.fillStyle = 'rgba(0,229,160,.04)';
+  ctx.fillRect(pad.left, wy, cW, cH + pad.top - wy);
+  ctx.fillStyle = 'rgba(245,166,35,.05)';
+  ctx.fillRect(pad.left, dy, cW, wy - dy);
+  ctx.fillStyle = 'rgba(255,59,92,.06)';
+  ctx.fillRect(pad.left, pad.top, cW, dy - pad.top);
+
+  // Gradient fill
+  const grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + cH);
+  grad.addColorStop(0, 'rgba(41,121,255,.35)');
+  grad.addColorStop(1, 'rgba(41,121,255,0)');
+  ctx.beginPath();
+  ctx.moveTo(toX(0), pad.top + cH);
+  history.forEach((pt, i) => ctx.lineTo(toX(i), toY(pt.level)));
+  ctx.lineTo(toX(history.length - 1), pad.top + cH);
+  ctx.closePath(); ctx.fillStyle = grad; ctx.fill();
+
+  // Line
+  ctx.beginPath(); ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#2979ff';
+  history.forEach((pt, i) => {
+    i === 0 ? ctx.moveTo(toX(i), toY(pt.level)) : ctx.lineTo(toX(i), toY(pt.level));
+  });
+  ctx.stroke();
+
+  // Coloured dots
+  history.forEach((pt, i) => {
+    let c = '#00e5a0';
+    if      (pt.level >= config.danger) c = '#ff3b5c';
+    else if (pt.level >= config.warn)   c = '#f5a623';
+    ctx.beginPath(); ctx.arc(toX(i), toY(pt.level), 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = c; ctx.fill();
+  });
+
+  // X-axis time labels
+  ctx.fillStyle = 'rgba(122,139,160,.7)';
+  ctx.font = `500 9px 'DM Mono', monospace`; ctx.textAlign = 'center';
+  history.forEach((pt, i) => {
+    if (i % 5 === 0 || i === history.length - 1) {
+      const t = pt.time.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+      ctx.fillText(t, toX(i), H - 6);
+    }
+  });
+}
+
+// ── CALIBRATE ─────────────────────────────────────────────────────────────────
+async function triggerCalibrate() {
+  if (!config.token) { toast('Save your Auth Token first!'); return; }
+  const btn    = document.getElementById('calibrate-btn');
+  const status = document.getElementById('calibrate-status');
+  const icon   = document.getElementById('calibrate-icon');
+  btn.classList.add('calibrating'); btn.disabled = true;
+  icon.textContent   = '⏳';
+  status.textContent = 'Sending calibrate signal…';
+  try {
+    const base = `https://blynk.cloud/external/api/update?token=${encodeURIComponent(config.token)}`;
+    await fetch(`${base}&v3=1`);
+    await new Promise(r => setTimeout(r, 500));
+    await fetch(`${base}&v3=0`);
+    status.textContent = '✓ Calibration started (takes ~5 s)';
+    icon.textContent = '⊕';
+    toast('Calibration triggered! Device calibrates for 5 seconds.');
+    setTimeout(() => {
+      btn.disabled = false; btn.classList.remove('calibrating');
+      status.textContent = 'Sends trigger to device via Blynk';
+    }, 7000);
+  } catch (e) {
+    status.textContent = 'Failed — check token & connection.';
+    icon.textContent = '⊕'; btn.disabled = false; btn.classList.remove('calibrating');
+    toast('Calibration trigger failed.');
+  }
+}
+
+// ── TOAST ─────────────────────────────────────────────────────────────────────
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+drawThresholdBands();
+if (config.token) fetchData();
+setInterval(fetchData, 5000);
+</script>
+</body>
+</html>
